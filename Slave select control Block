@@ -1,0 +1,71 @@
+
+
+module slave_select_control(
+
+    // Inputs
+    input         PRESETn,
+    input         send_data,
+    input         spiswai,
+    input  [1:0]  spi_mode,
+    input  [11:0] BaudRateDivisor,
+    input         PCLK,
+    input         mstr,
+
+    // Outputs
+    output reg    receive_data,
+    output reg    ss,
+    output        tip
+);
+
+    // Internal counters and signals
+    reg  [15:0] count;
+    wire [15:0] target;
+
+    // Derived control values
+    assign target = 16 * BaudRateDivisor;
+    assign tip    = ~ss;
+
+    // Sequential control logic
+    always @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
+            receive_data <= 1'b0;
+            ss           <= 1'b1;
+            count        <= 16'hffff;
+        end else begin
+
+            // SPI active conditions
+            if ((spi_mode == 2'b00 || spi_mode == 2'b01) && ~spiswai && mstr) begin
+
+                // Start of transmission
+                if (send_data) begin
+                    ss           <= 1'b0;
+                    receive_data <= 1'b0;
+                    count        <= 16'b0;
+                end else begin
+
+                    // Transmission in progress
+                    if (count <= target - 1'b1) begin
+                        ss    <= 1'b0;
+                        count <= count + 1'b1;
+
+                        if (count == target - 1'b1) begin
+                            receive_data <= 1'b1;
+                        end
+                    end else begin
+                        // End of transmission window
+                        count        <= 16'hffff;
+                        ss           <= 1'b1;
+                        receive_data <= 1'b0;
+                    end
+                end
+
+            end else begin
+                // SPI inactive or disabled
+                receive_data <= 1'b0;
+                ss           <= 1'b1;
+                count        <= 16'hffff;
+            end
+        end
+    end
+
+endmodule

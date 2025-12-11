@@ -1,0 +1,198 @@
+
+module apb_slave_interface(
+
+    // APB and SPI inputs
+    input         ss,
+    input         PRESETn,
+    input         PENABLE,
+    input  [7:0]  PWDATA,
+    input         tip,
+    input         PSEL,
+    input         receive_data,
+    input  [7:0]  miso_data,
+    input         PCLK,
+    input         PWRITE,
+    input  [2:0]  PADDR,
+
+    // Outputs from register fields and status signals
+    output        spiswai,
+    output [7:0]  PRDATA,
+    output [2:0]  spr,
+    output        mstr,
+    output        spi_interrupt_request,
+    output        cpol,
+    output        send_data,
+    output [7:0]  mosi_data,
+    output [1:0]  spi_mode,
+    output [2:0]  sppr,
+    output        cpha,
+    output reg    PREADY,
+    output        lsbfe,
+    output reg    PSLVERR
+);
+
+    // SPI register declarations
+    reg [7:0] SPI_CR_1;
+    reg [7:0] SPI_CR_2;
+    reg [7:0] SPI_BR;
+    reg [7:0] SPI_SR;
+    reg [7:0] SPI_DR;
+
+    // Internal state for APB transfer and SPI mode tracking
+    reg [1:0] state;
+    reg [1:0] mode;
+
+    reg wr_enb, rd_enb;
+
+    // Status flags
+    reg sptef, spif;
+
+    // Decoded control signals
+    wire modf, sptie, spie, spe, ssoe, modfen;
+
+    // APB access states
+    parameter IDLE   = 2'b00;
+    parameter SETUP  = 2'b01;
+    parameter ENABLE = 2'b10;
+
+    // SPI operating modes
+    parameter spi_run  = 2'b00;
+    parameter spi_wait = 2'b01;
+    parameter spi_stop = 2'b10;
+
+    // Bit masks for writable fields
+    wire [7:0] cr2_mask = 8'b00011011;
+    wire [7:0] br_mask  = 8'b01110111;
+
+    // CR1 fields
+    assign mstr   = SPI_CR_1[4];
+    assign cpol   = SPI_CR_1[3];
+    assign cpha   = SPI_CR_1[2];
+    assign lsbfe  = SPI_CR_1[0];
+
+    // CR1 interrupt and enable bits
+    assign spie   = SPI_CR_1[7];
+    assign spe    = SPI_CR_1[6];
+    assign sptie  = SPI_CR_1[5];
+    assign ssoe   = SPI_CR_1[1];
+
+    // CR2 fields
+    assign modfen  = SPI_CR_2[4];
+    assign spiswai = SPI_CR_2[1];
+
+    // Baud rate fields
+    assign sppr = SPI_BR[6:4];
+    assign spr  = SPI_BR[2:0];
+
+    // Mode fault detection
+    assign modf = (~ss) & mstr & modfen & (~ssoe);
+
+    assign spi_mode = mode;
+
+    // Asserted when APB writes to Data Register
+    assign send_data = (state == ENABLE) && PWRITE && (PADDR == 3'b101);
+
+    assign mosi_data = SPI_DR;
+
+    // APB read data multiplexer
+    assign PRDATA = rd_enb ?
+                    (PADDR == 3'b000 ? SPI_CR_1 :
+                     PADDR == 3'b001 ? SPI_CR_2 :
+                     PADDR == 3'b010 ? SPI_BR   :
+                     PADDR == 3'b011 ? SPI_SR   : SPI_DR) :
+                    8'b0;
+
+    // Interrupt based on enabled events
+    wire irq_events =
+        (spie  && (spif || modf)) ||
+        (sptie && sptef);
+
+    assign spi_interrupt_request = irq_events;
+
+    // Sequential logic block
+    always @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
+
+            state     <= IDLE;
+            mode      <= spi_run;
+
+            SPI_SR    <= 8'h00;
+            SPI_CR_1  <= 8'h04;
+            SPI_CR_2  <= 8'h00;
+            SPI_BR    <= 8'h00;
+            SPI_DR    <= 8'h00;
+
+            PREADY    <= 1'b0;
+            PSLVERR   <= 1'b0;
+
+            wr_enb    <= 1'b0;
+            rd_enb    <= 1'b0;
+
+            sptef     <= 1'b1;
+            spif      <= 1'b0;
+
+        end else begin
+
+            // APB handshake transitions
+            if (PSEL && !PENABLE)
+                state <= SETUP;
+            else if (PSEL && PENABLE)
+                state <= ENABLE;
+            else
+                state <= IDLE;
+
+            // SPI mode update
+            if (!spe && (mode == spi_run))
+                mode <= spi_wait;
+            else if (spe)
+                mode <= spi_run;
+            else if ((mode == spi_wait) && spiswai)
+                mode <= spi_stop;
+            else if ((mode == spi_wait) && !spiswai)
+                mode <= spi_wait;
+            else
+                mode <= spi_run;
+
+            // Read/write enables
+            wr_enb <= (state == ENABLE) && PWRITE;
+            rd_enb <= (state == ENABLE) && ~PWRITE;
+
+            // APB write operations
+            if (wr_enb) begin
+                case (PADDR)
+                    3'b000: SPI_CR_1 <= PWDATA;
+                    3'b001: SPI_CR_2 <= PWDATA & cr2_mask;
+                    3'b010: SPI_BR   <= PWDATA & br_mask;
+                    3'b101: SPI_DR   <= PWDATA;
+                    default: ;
+                endcase
+            end
+
+            // Data register update logic
+            if (!wr_enb) begin
+                if ((SPI_DR == PWDATA) && (SPI_DR != miso_data) &&
+                    (mode == spi_run || mode == spi_wait))
+                    SPI_DR <= 8'b0;
+                else if (receive_data && (mode == spi_run || mode == spi_wait))
+                    SPI_DR <= miso_data;
+            end
+
+            // Update flags
+            sptef <= (SPI_DR == 8'b0);
+            spif  <= (SPI_DR != 8'b0);
+
+            // Status register
+            SPI_SR <= {spif, 1'b0, sptef, modf, 4'b0};
+
+            // APB response signals
+            if (state == ENABLE) begin
+                PREADY  <= 1'b1;
+                PSLVERR <= tip;
+            end else begin
+                PREADY  <= 1'b0;
+                PSLVERR <= 1'b0;
+            end
+        end
+    end
+
+endmodule

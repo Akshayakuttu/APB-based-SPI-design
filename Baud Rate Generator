@@ -1,0 +1,76 @@
+
+
+module BaudRateGenerator(
+
+    // Inputs
+    input         ss,
+    input         PRESETn,
+    input  [2:0]  spr,
+    input         cpol,
+    input  [1:0]  spi_mode,
+    input         spiswai,
+    input         PCLK,
+    input  [2:0]  sppr,
+    input         cpha,
+
+    // Outputs
+    output        flags_low,
+    output [11:0] BaudRateDivisor,
+    output        sclk,
+    output        flag_high,
+    output        flag_low,
+    output        flags_high
+);
+
+    // Internal registers
+    reg [11:0] countreg;
+    reg sclkreg, fhreg, flreg, fshreg, fslreg;
+
+    // Internal wires
+    wire [11:0] count;
+    wire pre_sclk = cpol ? 1'b1 : 1'b0;
+    wire w1 = cpol ^ cpha;
+
+    // Baud rate divisor calculation
+    assign BaudRateDivisor = (sppr + 1) * (1 << (spr + 1));
+
+    // Output wiring
+    assign count      = PRESETn ? countreg : 12'b0;
+    assign sclk       = PRESETn ? sclkreg  : pre_sclk;
+
+    assign flag_high  = PRESETn ? fhreg    : 1'b0;
+    assign flag_low   = PRESETn ? flreg    : 1'b0;
+    assign flags_high = PRESETn ? fshreg   : 1'b0;
+    assign flags_low  = PRESETn ? fslreg   : 1'b0;
+
+    // Clock generation and timing control
+    always @(posedge PCLK) begin
+
+        // Clock division and SCLK toggle
+        if ((spi_mode == 2'b00 || spi_mode == 2'b01) && ~ss && ~spiswai) begin
+            if (count == BaudRateDivisor - 1'b1) begin
+                countreg <= 12'b0;
+                sclkreg  <= ~sclkreg;
+            end else begin
+                countreg <= countreg + 1;
+            end
+        end else begin
+            countreg <= 12'b0;
+            sclkreg  <= pre_sclk;
+        end
+
+        // Flag generation logic
+        if (!w1) begin
+            fslreg <= ((count == BaudRateDivisor - 2'b10) && ~sclk) ? 1'b1 : 1'b0;
+            flreg  <= ((count == BaudRateDivisor - 2'b10) &&  sclk) ? 1'b1 : 1'b0;
+            fshreg <= 1'b0;
+            fhreg  <= 1'b0;
+        end else begin
+            fshreg <= ((count == BaudRateDivisor - 2'b10) &&  sclk) ? 1'b1 : 1'b0;
+            fhreg  <= ((count == BaudRateDivisor - 2'b10) && ~sclk) ? 1'b1 : 1'b0;
+            fslreg <= 1'b0;
+            flreg  <= 1'b0;
+        end
+    end
+
+endmodule
