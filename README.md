@@ -26,32 +26,38 @@ To design a Verilog-based SPI Master that communicates over APB and supports:
 - Slave select control  
 - Full APB read/write operations
 
-1️⃣ Baud Rate Generator
+-1️⃣ Baud Rate Generator
 	•	Generates programmable SCLK for SPI transactions
 	•	Frequency derived from APB PCLK
 	•	Contains counter logic + divider register
-2️⃣ Shift Register
+
+	
+-2️⃣ Shift Register
 	•	Performs serial-to-parallel and parallel-to-serial conversion
 	•	Handles MOSI/MISO sequencing
 	•	Driven by SCLK from the baud generator
-3️⃣ APB Slave Interface
+
+	
+-3️⃣ APB Slave Interface
 	•	Decodes APB signals: PADDR, PWDATA, PWRITE, PSEL, PENABLE
 	•	Generates PRDATA, PREADY, PSLVERR
 	•	Writes to configuration registers used by other blocks
-4️⃣ Slave Select & Control Block
+
+	
+-4️⃣ Slave Select & Control Block
 	•	Drives chip select (ss) for SPI slaves
 	•	Controls enable, interrupt generation, and transaction start
 	•	Interacts with shift register and baud generator
   
- Top Module
+- Top Module
 
-Integrates all four submodules and provides APB + SPI top-level I/O:
+-Integrates all four submodules and provides APB + SPI top-level I/O:
 
-APB Inputs:
+-APB Inputs:
 PCLK, PRESETn, PADDR, PWRITE, PSEL, PENABLE, PWDATA
 
-SPI Outputs:
+-SPI Outputs:
 ss, sclk, mosi, spi_interrupt_request
 
-APB Outputs:
+-APB Outputs:
 PRDATA, PREADY, PSLVERR
